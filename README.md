@@ -9,7 +9,7 @@ This repository contains various useful benchmark tools and results for Sales an
 # How To Run This Code
 
 * Install the Gemini APU software and install the Deep1B data clusters
-* Mount the Sunnyvale NAS1 file server and copy the directory /mnt/nas1/George/Benchmarks/Deep1B_Benchmark_Data to your local machine
+* Mount the Sunnyvale NAS1 file server (ask Hess for access ) and copy the directory /mnt/nas1/George/Benchmarks/Deep1B_Benchmark_Data to your local machine
 * Install Anaconda distribution of python
 * Create and activate a python=3.8.5 environment.
 * Use python 'pip' to install the packages using the requirements file [faiss-gpu_requirements.txt](faiss-gpu_requirements.txt)
