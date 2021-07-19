@@ -7,6 +7,8 @@ import os
 import numpy
 import math
 import faiss
+import numpy as np
+from multiprocessing.pool import ThreadPool
 
 # Configuration
 configuration = swagger_client.configuration.Configuration()
@@ -63,7 +65,7 @@ ks = [ 10, 50, 100 ]
 fsearchbs = 8192
 
 # FAISS search parameter set.
-fsearchparams =  [ 1, 2, 4, 16, 32, 64, 128, 256 ]
+fsearchparams =  [ 1, 2, 4, 16, 32 ] #, 64, 128, 256 ]
 
 # FAISS index file
 findexfile = "/home/george/Projects/Deep1B_Benchmark_Data/deep-1B.IVF1048576,SQ8.faissindex"
@@ -103,6 +105,27 @@ def unwind_index_ivf(index):
         return index, None
     else:
         return None, None
+
+def rate_limited_iter(l):
+    'a thread pre-processes the next element'
+    pool = ThreadPool(1)
+    res = None
+
+    def next_or_None():
+        try:
+            return next(l)
+        except StopIteration:
+            return None
+
+    while True:
+        res_next = pool.apply_async(next_or_None)
+        if res is not None:
+            res = res.get()
+            if res is None:
+                return
+            yield res
+        res = res_next
+
 
 # This class wraps the faiss gpu index support.
 class IndexQuantizerOnGPU:
@@ -262,7 +285,9 @@ try:
     print("Capturing benchmarks for faiss...")
 
     # Reading faiss index file and configure.
+    print("Reading faiss index...")
     index = faiss.read_index(findexfile)
+    print("Done reading index.")
     index_ivf, vec_transform = unwind_index_ivf(index)
     if vec_transform is None:
         vec_transform = lambda x: x
@@ -289,7 +314,7 @@ try:
 
 
     # Do the faiss benchmarks.
-    for device in [ "cpu", "gpu" ]:
+    for device in [ "gpu", "cpu" ]:
 
         print("on %s..." % device)
 
@@ -321,24 +346,36 @@ try:
 
                 # Iterate across search params.
                 for params in fsearchparams:
-
+                   
+                    # Apply param to index
+                    ps.set_index_parameters(index, params)
+ 
                     # Load index to GPU as needed
                     if device == "gpu":
                         index_wrap = IndexQuantizerOnGPU(index, fsearchbs)
                     else:
                         index_wrap = index
 
-                    # Set the search params to the index
-                    ps.set_index_parameters(index, params)
+                    # Apply param to index
+                    ps.set_index_parameters(index, params) 
+
+                    # Reset stats
                     ivf_stats = faiss.cvar.indexIVF_stats
                     ivf_stats.reset()
                
                     # Perform benchmark 'count' times and use best latency.
                     best_latency = math.inf
                     for c in range(count):
-                        t0 = time.time()
-                        D, I = index.search(queries, k)
-                        t1 = time.time()
+
+                        if device == "gpu":
+                            t0 = time.time()
+                            D, I = index_wrap.search(queries, k)
+                            t1 = time.time()
+                        else:
+                            t0 = time.time()
+                            D, I = index.search(queries, k)
+                            t1 = time.time()
+
                         diff = t1-t0
                         if DEBUG: print("Latency:", diff)
                         if diff<best_latency:  best_latency = diff
