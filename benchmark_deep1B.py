@@ -190,8 +190,8 @@ try:
     if not allocation_id:
         if DEBUG: print("Allocating..")
         response = gsi_boards_apis.apis_allocate(body=AllocateRequest(
-                num_of_boards=1,
-                max_num_of_threads=5))
+                num_of_boards=num_of_boards,
+                max_num_of_threads=num_of_boards*4+1))
         allocation_id = response.allocation_id
     if DEBUG: print("Using allocation_id=",allocation_id)
 
