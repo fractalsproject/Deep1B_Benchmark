@@ -15,4 +15,4 @@ This repository contains various useful benchmark tools and results for Sales an
 * Use python 'pip' to install the packages using the requirements file [faiss-gpu_requirements.txt](faiss-gpu_requirements.txt)
 * Edit the top of the file [benchmark_deep1B.py](benchmark_deep1B.py) and change the parameters for your setup
 * Run the script [benchmark_deep1B.py](benchmark_deep1B.py).  Upon completion this will emit a CSV file with the benchmark data.
-* Use the [Analysis.ipynb](Analysis.ipynb) notebook to load the CSV file, to produce a plot similar to the one above.
+* Use the [Analyze.ipynb](Analyze.ipynb) notebook to load the CSV file, to produce a plot similar to the one above.
