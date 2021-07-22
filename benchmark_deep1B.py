@@ -30,15 +30,14 @@ num_of_centroids = 2097152 #1048576
 # Path to top-level data directory (queries, groundtruth, faissindex,...)
 path_to_data = "/home/george/Projects/Deep1B_Benchmark_Data"
 
-# Path to individual queries and groundtruth under the top-level data dir.
-queries_and_groundtruth = [ [ 10, 100, 1000 ],
-                            [ "queries/deep1B_queries_from_website_10.npy",
-                              "queries/deep1B_queries_from_website_100.npy",
-                              "queries/deep1B_queries_from_website_1000.npy"],
-                            [ "groundtruth/deep1B_groundtruth_from_website_10.npy",
-                              "groundtruth/deep1B_groundtruth_from_website_100.npy",
-                              "groundtruth/deep1B_groundtruth_from_website_1000.npy" ]
-                          ]
+# Path to individual full query set
+queries_file =  "from_yoav/deep1B_queries.npy"
+
+# Query subsets to test
+queries_subsets = [ 1, 10, 100, 1000 ]
+
+# Path to ground truth 
+groundtruth_file = "from_competition_site/deep_new_groundtruth.public.10K.bin"
 
 # Indicate if you want to search from a file path or a loaded array.
 use_file_path_for_search = False
@@ -211,22 +210,26 @@ try:
         if DEBUG: print("Load done")
         
     # Iterate across the queries sets...
-    for idx, queries_file in enumerate(queries_and_groundtruth[1]):
+    for idx, queries_size in enumerate(queries_subsets):
+        
+        if DEBUG: print("Query set size=", queries_size)
 
         # Get the query set file.
         queries_path = os.path.join( path_to_data, queries_file )
         if DEBUG: print("Using queries from %s" % queries_path )
 
-        # Get number of queries.
-        queries_size = queries_and_groundtruth[0][idx]
-        if DEBUG: print("Query set size=", queries_size)
-
         # Load the queries array as needed.
         if (not use_file_path_for_search):         
-            X = numpy.fromfile(queries_path,dtype=numpy.float32).reshape(queries_size, 96 )
+            #X = numpy.fromfile(queries_path,dtype=numpy.float32).reshape(queries_size, 96 )
+            X = np.load( queries_path )
+
+            # truncate based on the current subset test
+            X = X[:queries_size,:]
+
+        if DEBUG: print("X shape", X.shape)
 
         # Get the ground truth data file.
-        gt_file = os.path.join( path_to_data, queries_and_groundtruth[2][idx] )
+        gt_file = os.path.join( path_to_data, groundtruth_file )
         if DEBUG: print("Using groundtruth file %s" % gt_file)
 
         # Iterate across a set of k neighbors to retrieve...
@@ -235,7 +238,14 @@ try:
             if DEBUG: print("Using k=", k )
 
             # Load the ground truth array from file.
-            ground_truth = numpy.fromfile(gt_file, dtype=numpy.int32).reshape( queries_size, 100 )[:,:k]
+            n, d = map(int, np.fromfile(gt_file, dtype="uint32", count=2))
+            f = open(gt_file, "rb")
+            f.seek(4+4)
+            ground_truth = np.fromfile(f, dtype="int32", count=n * d).reshape(n, d)
+            if DEBUG: print(n,d, ground_truth.shape )
+
+            # truncate based on the current subset test and k test
+            ground_truth = ground_truth[:queries_size,:k]
             if DEBUG: print("Grouth truth dimensions and shape=", ground_truth.shape, ground_truth.dtype )
 
             # Iterate across search paramters.
@@ -328,20 +338,21 @@ try:
         print("on %s..." % device)
 
         # Iterate across the queries sets...
-        for idx, queries_file in enumerate(queries_and_groundtruth[1]):
+        for idx, queries_size in enumerate(queries_subsets):
+            
+            if DEBUG: print("Query set size=", queries_size)
 
             queries_path = os.path.join( path_to_data, queries_file )
             if DEBUG: print("Using queries from %s" % queries_path )
 
-            # Get number of queries.
-            queries_size = queries_and_groundtruth[0][idx]
-            if DEBUG: print("Query set size=", queries_size)
-
             # Load the queries array from file.
-            queries = numpy.fromfile(queries_path,dtype=numpy.float32).reshape(queries_size, 96 )
+            queries = np.load( queries_path )
+
+            # truncate based on the current subset test
+            queries = queries[:queries_size,:]
 
             # Get the ground truth data file.
-            gt_file = os.path.join( path_to_data, queries_and_groundtruth[2][idx] )
+            gt_file = os.path.join( path_to_data, groundtruth_file )
             if DEBUG: print("Using groundtruth file %s" % gt_file)
 
             # Iterate across a set of k neighbors to retrieve...
@@ -349,8 +360,15 @@ try:
 
                 if DEBUG: print("Using k=", k )
                 
-                # Load the ground truth array from file.                    
-                ground_truth = numpy.fromfile(gt_file, dtype=numpy.int32).reshape( queries_size, 100 )[:,:k]
+                # Load the ground truth array from file.
+                n, d = map(int, np.fromfile(gt_file, dtype="uint32", count=2))
+                f = open(gt_file, "rb")
+                f.seek(4+4)
+                ground_truth = np.fromfile(f, dtype="int32", count=n * d).reshape(n, d)
+                if DEBUG: print("Ground truth=", n,d, ground_truth.shape )
+
+                # truncate based on the current subset test and k test
+                ground_truth = ground_truth[:queries_size,:k]
                 if DEBUG: print("Grouth truth dimensions and shape=", ground_truth.shape, ground_truth.dtype )
 
                 # Iterate across search params.
