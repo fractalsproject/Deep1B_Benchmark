@@ -22,7 +22,10 @@ gsi_datasets_apis = swagger_client.DatasetsApi(api_config)
 gsi_search_apis = swagger_client.SearchApi(api_config)
 
 # Num boards (if not using an existing allocation id.
-num_of_boards = 3
+num_of_boards = 4
+
+# Num of centroids to make active for gemini.
+num_of_centroids = 2097152 #1048576
 
 # Path to top-level data directory (queries, groundtruth, faissindex,...)
 path_to_data = "/home/george/Projects/Deep1B_Benchmark_Data"
@@ -50,7 +53,7 @@ deallocate = False
 dataset_id = '0e7bdfda-8da9-4693-9bb8-01b79cbd59de'
 
 # Set to an existing allocation id to avoid allocation. Set to None to allocate.
-allocation_id = '49ea4c2a-e366-11eb-9751-0242ac110003'
+allocation_id = '5cd938a4-ea33-11eb-8cef-0242ac110002'
 
 # Gemini search params.
 gsearchparams = [-1]
@@ -59,7 +62,7 @@ gsearchparams = [-1]
 count = 3
 
 # The nearest neighbors to retrieve.  Max of 100.
-ks = [ 10, 50, 100 ]
+ks = [ 10 ] #, 50, 100 ]
 
 # FAISS search batch size
 fsearchbs = 8192
@@ -92,6 +95,7 @@ def compute_recall(a, b):
     ninter = sum( intersect )
     return ninter / a.size, intersect
 
+# Needed by faiss ivf algo.
 def unwind_index_ivf(index):
     if isinstance(index, faiss.IndexPreTransform):
         assert index.chain.size() == 1
@@ -106,6 +110,7 @@ def unwind_index_ivf(index):
     else:
         return None, None
 
+# Needed by faiss ivf algo.
 def rate_limited_iter(l):
     'a thread pre-processes the next element'
     pool = ThreadPool(1)
@@ -191,12 +196,16 @@ try:
         if DEBUG: print("Allocating..")
         response = gsi_boards_apis.apis_allocate(body=AllocateRequest(
                 num_of_boards=num_of_boards,
-                max_num_of_threads=num_of_boards*4+1))
+                max_num_of_threads=num_of_boards*4+4))
         allocation_id = response.allocation_id
     if DEBUG: print("Using allocation_id=",allocation_id)
 
     # Load dataset if needed
     if use_load_unload_api:
+
+        # TODO: Not sure how to use the API to select an active set of centroids
+        # TODO: but that should be included in here.
+
         if DEBUG: print("Loading dataset...", dataset_id)
         gsi_datasets_apis.apis_load_dataset(body=LoadDatasetRequest(allocation_id, dataset_id))
         if DEBUG: print("Load done")

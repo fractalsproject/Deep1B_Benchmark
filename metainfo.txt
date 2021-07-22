@@ -1,0 +1,9 @@
+f2
+  apu-3
+    3 boards
+    1048576 centroids
+  cpu-512GB
+    IVF1048576,SQ8
+  gpu-GEFORCERTXTI
+    IVF1048576,SQ8
+
