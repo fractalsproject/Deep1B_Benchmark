@@ -21,8 +21,10 @@ gsi_boards_apis = swagger_client.BoardsApi(api_config)
 gsi_datasets_apis = swagger_client.DatasetsApi(api_config)
 gsi_search_apis = swagger_client.SearchApi(api_config)
 
-# Num boards (if not using an existing allocation id.
-num_of_boards = 4
+# Num boards (if not using an existing allocation id.  
+# Set to 0 to disable gemini benchmarking.
+#num_of_boards = 4
+num_of_boards = 0
 
 # Num of centroids to make active for gemini.
 num_of_centroids = 2097152 #1048576
@@ -34,7 +36,8 @@ path_to_data = "/home/george/Projects/Deep1B_Benchmark_Data"
 queries_file =  "from_yoav/deep1B_queries.npy"
 
 # Query subsets to test
-queries_subsets = [ 1, 10, 100, 1000 ]
+# queries_subsets = [ 1, 10, 100, 1000, 10000 ]
+queries_subsets = [ 10000 ]
 
 # Path to ground truth 
 groundtruth_file = "from_competition_site/deep_new_groundtruth.public.10K.bin"
@@ -49,15 +52,16 @@ use_load_unload_api = False
 deallocate = False
 
 # Set to an existing dataset_id to avoid import.  Set to None for import.
-dataset_id = '0e7bdfda-8da9-4693-9bb8-01b79cbd59de'
+dataset_id = '3cd5ed17-db3d-4e9b-9609-c33f1898db55' 
 
 # Set to an existing allocation id to avoid allocation. Set to None to allocate.
-allocation_id = '5cd938a4-ea33-11eb-8cef-0242ac110002'
+allocation_id = '9e570096-fad6-11eb-a67d-0242ac110002'
 
 # Gemini search params.
 gsearchparams = [-1]
 
 # Number of times for each search parameter set.
+#count = 3
 count = 3
 
 # The nearest neighbors to retrieve.  Max of 100.
@@ -67,9 +71,10 @@ ks = [ 10 ] #, 50, 100 ]
 fsearchbs = 8192
 
 # FAISS search parameter set.
-fsearchparams =  [ 1, 2, 4, 16, 32 ] #, 64, 128, 256 ]
+fsearchparams =  [ 32, 34, 36, 40, 50, 60 ] #, 64, 128, 256 ]
+#fsearchparams =  [ 1, 2, 4, 16, 32, 40, 50, 60 ] #, 64, 128, 256 ]
 
-# FAISS index file
+# FAISS index file ( set to None if you don't want to benchmark faiss )
 findexfile = "/home/george/Projects/Deep1B_Benchmark_Data/deep-1B.IVF1048576,SQ8.faissindex"
 
 # FAISS search threads
@@ -82,10 +87,10 @@ fparallelmode = 3
 results = []
 
 # Results will be written to this csv.
-output = "./deep1B_results.csv" 
+output = "./deep1B_results_%s.csv" % str(time.time()) 
 
 # Print more intermediary results for debug purposes.
-DEBUG = False
+DEBUG = True
 
 # Function that compute the standard recall@N.
 def compute_recall(a, b):
@@ -178,178 +183,59 @@ class IndexQuantizerOnGPU:
 
 try:
 
-    print("Capturing benchmarks for gemini...")
+    if num_of_boards==0:
+        print("Gemini benchmarking has been disabled.")
 
-    # Import dataset if needed
-    if not dataset_id:
-        if DEBUG: print("Importing dataset", dataset_path)
-        response = gsi_datasets_apis.apis_import_dataset(body=ImportDatasetRequest(
-            ds_file_path=dataset_path,
-            ds_file_type="npy",
-            train_ind=True))
-        dataset_id = response.dataset_id
-    if DEBUG: print("Using dataset_id=", dataset_id)
-
-    # Allocate boards if needed
-    if not allocation_id:
-        if DEBUG: print("Allocating..")
-        response = gsi_boards_apis.apis_allocate(body=AllocateRequest(
-                num_of_boards=num_of_boards,
-                max_num_of_threads=num_of_boards*4+4))
-        allocation_id = response.allocation_id
-    if DEBUG: print("Using allocation_id=",allocation_id)
-
-    # Load dataset if needed
-    if use_load_unload_api:
-
-        # TODO: Not sure how to use the API to select an active set of centroids
-        # TODO: but that should be included in here.
-
-        if DEBUG: print("Loading dataset...", dataset_id)
-        gsi_datasets_apis.apis_load_dataset(body=LoadDatasetRequest(allocation_id, dataset_id))
-        if DEBUG: print("Load done")
-        
-    # Iterate across the queries sets...
-    for idx, queries_size in enumerate(queries_subsets):
-        
-        if DEBUG: print("Query set size=", queries_size)
-
-        # Get the query set file.
-        queries_path = os.path.join( path_to_data, queries_file )
-        if DEBUG: print("Using queries from %s" % queries_path )
-
-        # Load the queries array as needed.
-        if (not use_file_path_for_search):         
-            #X = numpy.fromfile(queries_path,dtype=numpy.float32).reshape(queries_size, 96 )
-            X = np.load( queries_path )
-
-            # truncate based on the current subset test
-            X = X[:queries_size,:]
-
-        if DEBUG: print("X shape", X.shape)
-
-        # Get the ground truth data file.
-        gt_file = os.path.join( path_to_data, groundtruth_file )
-        if DEBUG: print("Using groundtruth file %s" % gt_file)
-
-        # Iterate across a set of k neighbors to retrieve...
-        for k in ks:
-
-            if DEBUG: print("Using k=", k )
-
-            # Load the ground truth array from file.
-            n, d = map(int, np.fromfile(gt_file, dtype="uint32", count=2))
-            f = open(gt_file, "rb")
-            f.seek(4+4)
-            ground_truth = np.fromfile(f, dtype="int32", count=n * d).reshape(n, d)
-            if DEBUG: print(n,d, ground_truth.shape )
-
-            # truncate based on the current subset test and k test
-            ground_truth = ground_truth[:queries_size,:k]
-            if DEBUG: print("Grouth truth dimensions and shape=", ground_truth.shape, ground_truth.dtype )
-
-            # Iterate across search paramters.
-            for params in gsearchparams:
-
-                # Perform the benchmark 'count' times and use the best latency.
-                best_latency = math.inf
-                for c in range(count):
-
-                    if DEBUG: print("Performing search")
-
-                    if (use_file_path_for_search):
-                        t0 = time.time()
-                        search_api_response = gsi_search_apis.apis_search(body=SearchRequest(allocation_id, dataset_id, queries_file_path=queries_path, topk=k))
-                        t1 = time.time()
-                        diff = t1-t0
-                        if DEBUG: print("Latency:", diff)
-                        if diff<best_latency: best_latency = diff
-                        indices = search_api_response.indices
-                        distance = search_api_response.distance
-                        metadata = search_api_response.metadata
-                        if DEBUG: print("Search done", len(indices), type(indices))
-                    else:
-                        if DEBUG: print("Queries shape=", X.shape)
-                        pyX = X.tolist()
-                        t0 = time.time()
-                        search_api_response = gsi_search_apis.apis_search_by_queries_list(body=SearchByQueriesListRequest(allocation_id, 
-                                dataset_id, queries=pyX, topk=k))
-                        t1 = time.time()
-                        diff = t1 - t0
-                        if DEBUG: print("Latency:", diff)
-                        if diff<best_latency: best_latency = diff
-                        indices = search_api_response.indices
-                        distance = search_api_response.distance
-                        metadata = search_api_response.metadata
-                        if DEBUG: print("Search done", len(indices), type(indices))
-
-                # convert search results to numpy array
-                npIndices = numpy.array(indices)
-
-                # compute recall
-                recall, intersection = compute_recall(ground_truth,npIndices)
-
-                # store results
-                result = [ "apu", queries_size, k, params, best_latency, recall ]
-                results.append( result )
-                print("result=", result)
-
-    # Unload dataset if needed
-    if use_load_unload_api:
-        if DEBUG: print("Unloading dataset")
-        gsi_datasets_apis.apis_unload_dataset(body=UnloadDatasetRequest(allocation_id, dataset_id))
-        if DEBUG: print("Done unload")
-
-    # Do the faiss benchmarks.
-    print("Capturing benchmarks for faiss...")
-
-    # Reading faiss index file and configure.
-    print("Reading faiss index...")
-    index = faiss.read_index(findexfile)
-    print("Done reading index.")
-    index_ivf, vec_transform = unwind_index_ivf(index)
-    if vec_transform is None:
-        vec_transform = lambda x: x
-    if index_ivf is not None:
-        if DEBUG: print("imbalance_factor=", index_ivf.invlists.imbalance_factor())
-    if DEBUG: print("Index size on disk: ", os.stat(findexfile).st_size)
-    precomputed_table_size = 0
-    if hasattr(index_ivf, 'precomputed_table'):
-        precomputed_table_size = index_ivf.precomputed_table.size() * 4
-    if DEBUG: print("Precomputed tables size:", precomputed_table_size)
-
-    # Configure the search.
-    if fsearchthreads == -1:
-        if DEBUG: print("Search threads:", faiss.omp_get_max_threads())
     else:
-        if DEBUG: print("Setting nb of threads to", fsearchthreads)
-        faiss.omp_set_num_threads(fsearchthreads)
-    if fparallelmode != -1:
-        if DEBUG: print("Setting IVF parallel mode to", fparallelmode)
-        index_ivf.parallel_mode
-        index_ivf.parallel_mode = fparallelmode
-    ps = faiss.ParameterSpace()
-    ps.initialize(index)
+        print("Capturing benchmarks for gemini...")
 
+        # Import dataset if needed
+        if not dataset_id:
+            if DEBUG: print("Importing dataset", dataset_path)
+            response = gsi_datasets_apis.apis_import_dataset(body=ImportDatasetRequest(
+                ds_file_path=dataset_path,
+                ds_file_type="npy",
+                train_ind=True))
+            dataset_id = response.dataset_id
+        if DEBUG: print("Using dataset_id=", dataset_id)
 
-    # Do the faiss benchmarks.
-    for device in [ "gpu", "cpu" ]:
+        # Allocate boards if needed
+        if not allocation_id:
+            if DEBUG: print("Allocating..")
+            response = gsi_boards_apis.apis_allocate(body=AllocateRequest(
+                    num_of_boards=num_of_boards,
+                    max_num_of_threads=num_of_boards*4+4))
+            allocation_id = response.allocation_id
+        if DEBUG: print("Using allocation_id=",allocation_id)
 
-        print("on %s..." % device)
+        # Load dataset if needed
+        if use_load_unload_api:
 
+            # TODO: Not sure how to use the API to select an active set of centroids
+            # TODO: but that should be included in here.
+
+            if DEBUG: print("Loading dataset...", dataset_id)
+            gsi_datasets_apis.apis_load_dataset(body=LoadDatasetRequest(allocation_id, dataset_id))
+            if DEBUG: print("Load done")
+            
         # Iterate across the queries sets...
         for idx, queries_size in enumerate(queries_subsets):
             
             if DEBUG: print("Query set size=", queries_size)
 
+            # Get the query set file.
             queries_path = os.path.join( path_to_data, queries_file )
             if DEBUG: print("Using queries from %s" % queries_path )
 
-            # Load the queries array from file.
-            queries = np.load( queries_path )
+            # Load the queries array as needed.
+            if (not use_file_path_for_search):         
+                #X = numpy.fromfile(queries_path,dtype=numpy.float32).reshape(queries_size, 96 )
+                X = np.load( queries_path )
 
-            # truncate based on the current subset test
-            queries = queries[:queries_size,:]
+                # truncate based on the current subset test
+                X = X[:queries_size,:]
+
+            if DEBUG: print("X shape", X.shape)
 
             # Get the ground truth data file.
             gt_file = os.path.join( path_to_data, groundtruth_file )
@@ -359,64 +245,194 @@ try:
             for k in ks:
 
                 if DEBUG: print("Using k=", k )
-                
+
                 # Load the ground truth array from file.
                 n, d = map(int, np.fromfile(gt_file, dtype="uint32", count=2))
                 f = open(gt_file, "rb")
                 f.seek(4+4)
                 ground_truth = np.fromfile(f, dtype="int32", count=n * d).reshape(n, d)
-                if DEBUG: print("Ground truth=", n,d, ground_truth.shape )
+                if DEBUG: print(n,d, ground_truth.shape )
 
                 # truncate based on the current subset test and k test
                 ground_truth = ground_truth[:queries_size,:k]
                 if DEBUG: print("Grouth truth dimensions and shape=", ground_truth.shape, ground_truth.dtype )
 
-                # Iterate across search params.
-                for params in fsearchparams:
-                   
-                    # Apply param to index
-                    ps.set_index_parameters(index, params)
- 
-                    # Load index to GPU as needed
-                    if device == "gpu":
-                        index_wrap = IndexQuantizerOnGPU(index, fsearchbs)
-                    else:
-                        index_wrap = index
+                # Iterate across search paramters.
+                for params in gsearchparams:
 
-                    # Apply param to index
-                    ps.set_index_parameters(index, params) 
-
-                    # Reset stats
-                    ivf_stats = faiss.cvar.indexIVF_stats
-                    ivf_stats.reset()
-               
-                    # Perform benchmark 'count' times and use best latency.
+                    # Perform the benchmark 'count' times and use the best latency.
                     best_latency = math.inf
                     for c in range(count):
 
-                        if device == "gpu":
+                        if DEBUG: print("Performing search")
+
+                        if (use_file_path_for_search):
                             t0 = time.time()
-                            D, I = index_wrap.search(queries, k)
+                            search_api_response = gsi_search_apis.apis_search(body=SearchRequest(allocation_id, dataset_id, queries_file_path=queries_path, topk=k))
                             t1 = time.time()
+                            diff = t1-t0
+                            if DEBUG: print("Latency:", diff)
+                            if diff<best_latency: best_latency = diff
+                            indices = search_api_response.indices
+                            distance = search_api_response.distance
+                            metadata = search_api_response.metadata
+                            if DEBUG: print("Search done", len(indices), type(indices))
                         else:
+                            if DEBUG: print("Queries shape=", X.shape)
+                            pyX = X.tolist()
                             t0 = time.time()
-                            D, I = index.search(queries, k)
+                            print("about to call queries_list...")
+                            search_api_response = gsi_search_apis.apis_search_by_queries_list(body=SearchByQueriesListRequest(allocation_id, 
+                                    dataset_id, queries=pyX, topk=k))
+                            print("after the call queries_list...")
                             t1 = time.time()
+                            diff = t1 - t0
+                            if DEBUG: print("Latency:", diff)
+                            if diff<best_latency: best_latency = diff
+                            indices = search_api_response.indices
+                            distance = search_api_response.distance
+                            metadata = search_api_response.metadata
+                            if DEBUG: print("Search done", len(indices), type(indices))
 
-                        diff = t1-t0
-                        if DEBUG: print("Latency:", diff)
-                        if diff<best_latency:  best_latency = diff
+                    # convert search results to numpy array
+                    npIndices = numpy.array(indices)
 
-                    # Compute the recall.
-                    recall, intersection = compute_recall(ground_truth[:, :k], I[:, :k])
+                    # compute recall
+                    recall, intersection = compute_recall(ground_truth,npIndices)
 
                     # store results
-                    result =  [ device, queries_size, k, params, best_latency, recall ] 
+                    result = [ "apu", queries_size, k, params, best_latency, recall ]
                     results.append( result )
-                    print("result=",result)                    
+                    print("result=", result)
+
+        # Unload dataset if needed
+        if use_load_unload_api:
+            if DEBUG: print("Unloading dataset")
+            gsi_datasets_apis.apis_unload_dataset(body=UnloadDatasetRequest(allocation_id, dataset_id))
+            if DEBUG: print("Done unload")
+
+    # Benchmark faiss if we have an index available
+    if findexfile:
+        # Do the faiss benchmarks.
+        print("Capturing benchmarks for faiss...")
+
+        # Reading faiss index file and configure.
+        print("Reading faiss index...")
+        index = faiss.read_index(findexfile)
+        print("Done reading index.")
+        index_ivf, vec_transform = unwind_index_ivf(index)
+        if vec_transform is None:
+            vec_transform = lambda x: x
+        if index_ivf is not None:
+            if DEBUG: print("imbalance_factor=", index_ivf.invlists.imbalance_factor())
+        if DEBUG: print("Index size on disk: ", os.stat(findexfile).st_size)
+        precomputed_table_size = 0
+        if hasattr(index_ivf, 'precomputed_table'):
+            precomputed_table_size = index_ivf.precomputed_table.size() * 4
+        if DEBUG: print("Precomputed tables size:", precomputed_table_size)
+
+        # Configure the search.
+        if fsearchthreads == -1:
+            if DEBUG: print("Search threads:", faiss.omp_get_max_threads())
+        else:
+            if DEBUG: print("Setting nb of threads to", fsearchthreads)
+            faiss.omp_set_num_threads(fsearchthreads)
+        if fparallelmode != -1:
+            if DEBUG: print("Setting IVF parallel mode to", fparallelmode)
+            index_ivf.parallel_mode
+            index_ivf.parallel_mode = fparallelmode
+        ps = faiss.ParameterSpace()
+        ps.initialize(index)
+
+
+        # Do the faiss benchmarks.
+        for device in [ "gpu", "cpu" ]:
+
+            print("on %s..." % device)
+
+            # Iterate across the queries sets...
+            for idx, queries_size in enumerate(queries_subsets):
+                
+                if DEBUG: print("Query set size=", queries_size)
+
+                queries_path = os.path.join( path_to_data, queries_file )
+                if DEBUG: print("Using queries from %s" % queries_path )
+
+                # Load the queries array from file.
+                queries = np.load( queries_path )
+
+                # truncate based on the current subset test
+                queries = queries[:queries_size,:]
+
+                # Get the ground truth data file.
+                gt_file = os.path.join( path_to_data, groundtruth_file )
+                if DEBUG: print("Using groundtruth file %s" % gt_file)
+
+                # Iterate across a set of k neighbors to retrieve...
+                for k in ks:
+
+                    if DEBUG: print("Using k=", k )
+                    
+                    # Load the ground truth array from file.
+                    n, d = map(int, np.fromfile(gt_file, dtype="uint32", count=2))
+                    f = open(gt_file, "rb")
+                    f.seek(4+4)
+                    ground_truth = np.fromfile(f, dtype="int32", count=n * d).reshape(n, d)
+                    if DEBUG: print("Ground truth=", n,d, ground_truth.shape )
+
+                    # truncate based on the current subset test and k test
+                    ground_truth = ground_truth[:queries_size,:k]
+                    if DEBUG: print("Grouth truth dimensions and shape=", ground_truth.shape, ground_truth.dtype )
+
+                    # Iterate across search params.
+                    for params in fsearchparams:
+                       
+                        # Apply param to index
+                        ps.set_index_parameters(index, params)
+     
+                        # Load index to GPU as needed
+                        if device == "gpu":
+                            index_wrap = IndexQuantizerOnGPU(index, fsearchbs)
+                        else:
+                            index_wrap = index
+
+                        # Apply param to index
+                        ps.set_index_parameters(index, params) 
+
+                        # Reset stats
+                        ivf_stats = faiss.cvar.indexIVF_stats
+                        ivf_stats.reset()
+                   
+                        # Perform benchmark 'count' times and use best latency.
+                        best_latency = math.inf
+                        for c in range(count):
+
+                            if device == "gpu":
+                                t0 = time.time()
+                                D, I = index_wrap.search(queries, k)
+                                t1 = time.time()
+                            else:
+                                t0 = time.time()
+                                D, I = index.search(queries, k)
+                                t1 = time.time()
+
+                            diff = t1-t0
+                            if DEBUG: print("Latency:", diff)
+                            if diff<best_latency:  best_latency = diff
+
+                        # Compute the recall.
+                        recall, intersection = compute_recall(ground_truth[:, :k], I[:, :k])
+
+                        # store results
+                        result =  [ device, queries_size, k, params, best_latency, recall ] 
+                        results.append( result )
+                        print("result=",result)                    
+    else:
+        print("No faiss index so not benchmarking it.")
 
     # Write the results
     if results:
+        print("Writing results to file=%f", output )
         f = open(output,"w+")
         f.write("device,query_set_size,k,params,latency,recall\n")
         for result in results:
