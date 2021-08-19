@@ -349,7 +349,7 @@ try:
 
     # Write the results
     if results:
-        print("Writing results to file=%f" % output )
+        print("Writing results to file=%s" % output )
         f = open(output,"w+")
         f.write("device,query_set_size,k,params,latency,recall\n")
         for result in results:
