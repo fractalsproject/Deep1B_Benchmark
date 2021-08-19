@@ -10,11 +10,11 @@ This repository contains various useful benchmark tools and results for Sales an
 
 ## How To Run "benchmark_deep1B_gpu_cpu_only.py":
 
-* You should already have installed CUDA version 11.0 or compatible (higher may we, we only tested on 11.0)
+* You should already have installed CUDA version 11.0 or compatible (higher may be possible, we only tested on 11.0)
 * We downloaded and installed the Anaconda distribution of python but other distributions should word
 * Create a python environment using python=3.8.5 and activate it
 * Install python dependencies using "faiss-gpu_requirements.txt" requirements file
-* Edit the benchmark_deep1B_gpu_cpu_only.py with your local settings ( change paths to various index and ground truth files. )
+* Edit the benchmark_deep1B_gpu_cpu_only.py with your local settings ( change paths to various index and ground truth files - let me know if you need access to any of these files. )
 * Run "python benchmark_deep1B_gpu_cpu_only.py"
 
 
