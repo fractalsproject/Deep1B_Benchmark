@@ -23,11 +23,17 @@ groundtruth_file = "from_competition_site/deep_new_groundtruth.public.10K.bin"
 queries_size = 10000
 
 # Number of times for each search parameter set.
-#count = 3
-count = 1
+count = 3
 
 # The nearest neighbors to retrieve
 knn = 10 
+
+# FAISS search batch size
+fsearchbs = 8192
+
+# FAISS search parameter set.
+fsearchparams =  [ 1, 2, 4, 16, 32, 64, 128, 140, 160, 180, 200, 220, 240, 256 ]
+#fsearchparams =  [ 1, 2, 4, 16, 32, 64, 128, 256, 512 ]
 
 # FAISS index file ( set to None if you don't want to benchmark faiss )
 # 99.32 findexfile = "/home/george/Projects/Deep1B_Benchmark_Data/deep-1B.IVF1048576,SQ8.faissindex"
@@ -46,7 +52,7 @@ results = []
 output = "./deep1B_results_gpu_only_%s.csv" % str(time.time()) 
 
 # Print more intermediary results for debug purposes.
-DEBUG = True
+DEBUG = False
 
 # Function that compute the standard recall@N.
 def compute_recall(a, b):
@@ -199,29 +205,29 @@ def load_index(idxfile, no_precomputed_tables=True, searchthreads=-1, parallel_m
     if vec_transform is None:
         vec_transform = lambda x: x
     if index_ivf is not None:
-        print("imbalance_factor=", index_ivf.invlists.imbalance_factor())
+        print("\tImbalance_factor=", index_ivf.invlists.imbalance_factor())
 
     if no_precomputed_tables:
         if isinstance(index_ivf, faiss.IndexIVFPQ):
-            print("disabling precomputed table")
+            print("\tDisabling precomputed table")
             index_ivf.use_precomputed_table = -1
             index_ivf.precomputed_table.clear()
 
     precomputed_table_size = 0
     if hasattr(index_ivf, 'precomputed_table'):
         precomputed_table_size = index_ivf.precomputed_table.size() * 4
-    print("precomputed tables size:", precomputed_table_size)
+    print("\tPrecomputed tables size:", precomputed_table_size)
 
     # prep for the searches
 
     if searchthreads == -1:
-        print("Search threads:", faiss.omp_get_max_threads())
+        print("\tSearch threads:", faiss.omp_get_max_threads())
     else:
-        print("Setting nb of threads to", searchthreads)
+        print("\tSetting nb of threads to", searchthreads)
         faiss.omp_set_num_threads(searchthreads)
 
     if parallel_mode != -1:
-        print("setting IVF parallel mode to", parallel_mode)
+        print("\tSetting IVF parallel mode to", parallel_mode)
         index_ivf.parallel_mode
         index_ivf.parallel_mode = parallel_mode
 
@@ -237,50 +243,27 @@ def load_index(idxfile, no_precomputed_tables=True, searchthreads=-1, parallel_m
 
 try:
 
+    print_header = False
+
     # Benchmark faiss if we have an index available
     if findexfile:
         # Do the faiss benchmarks.
         print("Capturing benchmarks for faiss...")
 
         # Reading faiss index file and configure.
-        print("Reading faiss index...")
+        print("Reading faiss index file...")
 
-        #GW index = faiss.read_index(findexfile)
+        # Load the index
         ret = load_index(findexfile)
         if ret==False:
             raise Exception("Cannot read faiss index.")
         ps, cpu_index, index = ret
-        print("Done reading index.")
-
-        if False:
-            index_ivf, vec_transform = unwind_index_ivf(index)
-            if vec_transform is None:
-                vec_transform = lambda x: x
-            if index_ivf is not None:
-                if DEBUG: print("imbalance_factor=", index_ivf.invlists.imbalance_factor())
-            if DEBUG: print("Index size on disk: ", os.stat(findexfile).st_size)
-            precomputed_table_size = 0
-            if hasattr(index_ivf, 'precomputed_table'):
-                precomputed_table_size = index_ivf.precomputed_table.size() * 4
-            if DEBUG: print("Precomputed tables size:", precomputed_table_size)
-
-            # Configure the search.
-            if fsearchthreads == -1:
-                if DEBUG: print("Search threads:", faiss.omp_get_max_threads())
-            else:
-                if DEBUG: print("Setting nb of threads to", fsearchthreads)
-                faiss.omp_set_num_threads(fsearchthreads)
-            if fparallelmode != -1:
-                if DEBUG: print("Setting IVF parallel mode to", fparallelmode)
-                index_ivf.parallel_mode
-                index_ivf.parallel_mode = fparallelmode
-            ps = faiss.ParameterSpace()
-            ps.initialize(index)
+        print("Done reading index file.")
 
         # Do the faiss benchmarks.
         for device in [ "gpu", "cpu" ]:
 
-            print("on %s..." % device)
+            print("Running on %s..." % device)
 
             if DEBUG: print("Queries size=", queries_size)
 
@@ -307,7 +290,7 @@ try:
             if DEBUG: print("Ground truth=", n,d, ground_truth.shape )
 
             # truncate based on the current subset test and k test
-            ground_truth = ground_truth[:queries_size,:k]
+            ground_truth = ground_truth[:queries_size,:knn]
             if DEBUG: print("Grouth truth dimensions and shape=", ground_truth.shape, ground_truth.dtype )
 
             # Iterate across search params.
@@ -333,30 +316,40 @@ try:
 
                     if device == "gpu":
                         t0 = time.time()
-                        D, I = index_wrap.search(queries, k)
+                        D, I = index_wrap.search(queries, knn)
                         t1 = time.time()
                     else:
                         t0 = time.time()
-                        D, I = cpu_index.search(queries, k)
+                        D, I = cpu_index.search(queries, knn)
                         t1 = time.time()
 
                     diff = t1-t0
                     if DEBUG: print("Latency:", diff)
                     if diff<best_latency:  best_latency = diff
 
-                # Compute the recall.
-                recall, intersection = compute_recall(ground_truth[:, :k], I[:, :k])
+                # Compute the recall
+                recall, intersection = compute_recall(ground_truth[:, :knn], I[:, :knn])
+
+                # Compute throughput
+                qps = queries_size/best_latency
 
                 # store results
-                result =  [ device, queries_size, k, params, best_latency, recall ] 
+                result =  [ device, queries_size, knn, params, best_latency, recall ] 
                 results.append( result )
-                print("result=",result)                    
+                if DEBUG: print("Result=",result) 
+
+                # print results
+                if not print_header:
+                    print("device\tqsize\tknn\ttries\tprobes\tlatency\tqps\t\trecall")
+                    print_header = True
+                print("%s\t%d\t%d\t%d\t%d\t%1.1f\t%1.1f\t\t%1.2f" % (device,queries_size,knn,count,params,best_latency,qps,recall))
+            
     else:
         print("No faiss index so not benchmarking it.")
 
     # Write the results
     if results:
-        print("Writing results to file=%f", output )
+        print("Writing results to file=%f" % output )
         f = open(output,"w+")
         f.write("device,query_set_size,k,params,latency,recall\n")
         for result in results:
